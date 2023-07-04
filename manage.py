@@ -1,9 +1,12 @@
-#!/usr/bin/env python
 import os
 import subprocess
 
+#from flask import Flask
+from dotenv import load_dotenv, find_dotenv
+from flask.cli import AppGroup, with_appcontext, FlaskGroup, ScriptInfo
+
 from flask_migrate import Migrate, MigrateCommand
-from flask_script import Manager, Shell, Server
+from flask_sqlalchemy import SQLAlchemy
 from redis import Redis
 from rq import Connection, Queue, Worker
 
@@ -11,22 +14,44 @@ from app import create_app, db
 from app.models import Role, User
 from config import Config
 
+
+_ = load_dotenv(find_dotenv())
 app = create_app(os.getenv('FLASK_CONFIG') or 'default')
-manager = Manager(app)
 migrate = Migrate(app, db)
+
+cli = AppGroup('manage', help='Manage commands')
 
 
 def make_shell_context():
     return dict(app=app, db=db, User=User, Role=Role)
 
+@app.cli.command('shell')
+@with_appcontext
+def shell_command():
+    """Start a Python shell with the Flask app context."""
+    import code
 
-manager.add_command('shell', Shell(make_context=make_shell_context))
-manager.add_command('db', MigrateCommand)
-manager.add_command('runserver', Server(host="0.0.0.0"))
+    context = make_shell_context()
+    code.interact(local=context)
 
 
-@manager.command
-def test():
+@app.cli.command('db')
+@with_appcontext
+def db_command():
+    """Run database migrations."""
+    MigrateCommand().run()
+
+
+@app.cli.command('runserver')
+@with_appcontext
+def runserver_command():
+    """Run the development server."""
+    app.run(host='0.0.0.0')
+
+
+@app.cli.command('test')
+@with_appcontext
+def test_command():
     """Run the unit tests."""
     import unittest
 
@@ -34,8 +59,9 @@ def test():
     unittest.TextTestRunner(verbosity=2).run(tests)
 
 
-@manager.command
-def recreate_db():
+@app.cli.command('recreate_db')
+@with_appcontext
+def recreate_db_command():
     """
     Recreates a local database. You probably should not use this on
     production.
@@ -45,35 +71,32 @@ def recreate_db():
     db.session.commit()
 
 
-@manager.option(
-    '-n',
-    '--number-users',
-    default=10,
-    type=int,
-    help='Number of each model type to create',
-    dest='number_users')
-def add_fake_data(number_users):
+@app.cli.command('add_fake_data')
+@with_appcontext
+def add_fake_data_command():
     """
     Adds fake data to the database.
     """
-    User.generate_fake(count=number_users)
+    User.generate_fake(count=10)
 
 
-@manager.command
-def setup_dev():
+@app.cli.command('setup_dev')
+@with_appcontext
+def setup_dev_command():
     """Runs the set-up needed for local development."""
-    setup_general()
+    setup_general_command()
 
 
-@manager.command
-def setup_prod():
+@app.cli.command('setup_prod')
+@with_appcontext
+def setup_prod_command():
     """Runs the set-up needed for production."""
-    setup_general()
+    setup_general_command()
 
 
-def setup_general():
+def setup_general_command():
     """Runs the set-up needed for both local development and production.
-       Also sets up first admin user."""
+    Also sets up the first admin user."""
     Role.insert_roles()
     admin_query = Role.query.filter_by(name='Administrator')
     if admin_query.first() is not None:
@@ -89,8 +112,9 @@ def setup_general():
             print('Added administrator {}'.format(user.full_name()))
 
 
-@manager.command
-def run_worker():
+@app.cli.command('run_worker')
+@with_appcontext
+def run_worker_command():
     """Initializes a slim rq task queue."""
     listen = ['default']
     conn = Redis(
@@ -104,8 +128,9 @@ def run_worker():
         worker.work()
 
 
-@manager.command
-def format():
+@app.cli.command('format')
+@with_appcontext
+def format_command():
     """Runs the yapf and isort formatters over the project."""
     isort = 'isort -rc *.py app/'
     yapf = 'yapf -r -i *.py app/'
@@ -118,4 +143,7 @@ def format():
 
 
 if __name__ == '__main__':
-    manager.run()
+    #cli = FlaskGroup(app)
+    app.cli.add_command(cli)
+    app.run()
+    #cli()
